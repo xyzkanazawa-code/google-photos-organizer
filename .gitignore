@@ -4,6 +4,9 @@ browser_data/
 # 一時ダウンロードフォルダ
 temp_downloads/
 
+# ユーザーが「残す」と決めた写真の保護リスト
+protected_photos.json
+
 # Pythonのキャッシュ
 __pycache__/
 *.pyc
