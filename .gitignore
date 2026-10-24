@@ -1,5 +1,8 @@
-# Google Chromeのセッション・ログイン情報（個人情報保護のため除外）
+# Google Chromeのセッション・ログイン情報
 browser_data/
+
+# 一時ダウンロードフォルダ
+temp_downloads/
 
 # Pythonのキャッシュ
 __pycache__/
