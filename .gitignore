@@ -1,0 +1,10 @@
+# Google Chromeのセッション・ログイン情報（個人情報保護のため除外）
+browser_data/
+
+# Pythonのキャッシュ
+__pycache__/
+*.pyc
+
+# 仮想環境
+venv/
+.venv/
