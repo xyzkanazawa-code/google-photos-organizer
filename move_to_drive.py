@@ -2,18 +2,39 @@ import os
 import sys
 import time
 import zipfile
+import json
 import urllib.parse
 from playwright.sync_api import sync_playwright
+
+PROTECTED_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "protected_photos.json")
+
+def load_protected_photos():
+    """残す（除外する）写真のリストを読み込む"""
+    if os.path.exists(PROTECTED_FILE):
+        try:
+            with open(PROTECTED_FILE, "r", encoding="utf-8") as f:
+                return set(json.load(f))
+        except Exception:
+            return set()
+    return set()
+
+def save_protected_photos(protected_set):
+    """残す（除外する）写真のリストを保存する"""
+    try:
+        with open(PROTECTED_FILE, "w", encoding="utf-8") as f:
+            json.dump(list(protected_set), f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"保護リストの保存に失敗しました: {e}")
 
 def main():
     print("==================================================")
     print("【Googleフォト ➜ Googleドライブ移動ツール】")
     print("==================================================")
-    print("※ 写真内の文字（運行指示書など）をAI検索して")
-    print("   パソコンの『G:\\マイドライブ\\運行指示書』へ直接保存します！")
+    print("※ 好きな言葉（運行指示書、領収書など）で検索して、")
+    print("   Googleドライブ（Gドライブ）のお好きなフォルダへ自動保存できます！")
+    print("※ 新しいフォルダ名を入れると、自動で新規作成されます。")
     print("==================================================")
 
-    # ユーザーデータ（ログイン情報）のフォルダ
     base_dir = os.path.dirname(os.path.abspath(__file__))
     user_data_dir = os.path.join(base_dir, "browser_data")
 
@@ -22,25 +43,41 @@ def main():
         input("Enterキーを押して終了します...")
         return
 
-    # 保存先フォルダ（G:\マイドライブ\運行指示書）
-    drive_target_dir = r"G:\マイドライブ\運行指示書"
-    if not os.path.exists(drive_target_dir):
-        # もし見つからない場合のフォールバック（作成）
-        try:
-            os.makedirs(drive_target_dir, exist_ok=True)
-        except Exception:
-            # Gドライブがない場合はローカルの「運行指示書_保存」フォルダに保存
-            drive_target_dir = os.path.join(base_dir, "運行指示書_保存")
-            os.makedirs(drive_target_dir, exist_ok=True)
+    # 保護リストの読み込み
+    protected_photos = load_protected_photos()
 
-    print(f"📁 保存先フォルダ: {drive_target_dir}")
-
-    # 検索キーワード
-    keyword = input("\n検索キーワードを入力してください [未入力時は '運行指示書']: ").strip()
+    # 1. 検索キーワードの入力
+    print("\n【ステップ 1】探したい写真のキーワード")
+    keyword = input("検索キーワードを入力してください [未入力時は '運行指示書']: ").strip()
     if not keyword:
         keyword = "運行指示書"
 
-    # 選択枚数
+    # 2. 保存先フォルダの決定
+    print("\n【ステップ 2】Googleドライブ内の保存先フォルダ")
+    my_drive_base = r"G:\マイドライブ"
+    if not os.path.exists(my_drive_base):
+        # Gドライブが見つからない場合の予備（ローカル）
+        my_drive_base = os.path.join(base_dir, "GoogleDrive_保存先")
+
+    default_folder_name = keyword
+    print(f"どのフォルダに保存しますか？（未入力なら自動で『{default_folder_name}』になります）")
+    folder_input = input("フォルダ名を入力 [未入力時はそのままEnter]: ").strip()
+
+    target_folder_name = folder_input if folder_input else default_folder_name
+    drive_target_dir = os.path.join(my_drive_base, target_folder_name)
+
+    # フォルダが存在しなければ自動作成
+    if not os.path.exists(drive_target_dir):
+        try:
+            os.makedirs(drive_target_dir, exist_ok=True)
+            print(f"✨ 新しいフォルダ『{target_folder_name}』をGoogleドライブに作成しました！")
+        except Exception as e:
+            print(f"フォルダ作成エラー: {e}")
+
+    print(f"📁 保存先: {drive_target_dir}")
+
+    # 3. 選択枚数
+    print("\n【ステップ 3】枚数の指定")
     count_str = input("ダウンロードする枚数を入力してください（例: 5）[未入力時は 5]: ").strip()
     target_count = int(count_str) if count_str.isdigit() and int(count_str) > 0 else 5
 
@@ -73,8 +110,9 @@ def main():
 
         selected_count = 0
         scroll_attempts = 0
+        initially_checked_labels = []
 
-        while selected_count < target_count and scroll_attempts < 10:
+        while selected_count < target_count and scroll_attempts < 15:
             checkboxes = page.locator('div[role="checkbox"][aria-label^="写真 - "], div[role="checkbox"][aria-label^="動画 - "]').all()
 
             found_new = False
@@ -83,12 +121,18 @@ def main():
                     break
 
                 try:
+                    label = cb.get_attribute("aria-label") or ""
+                    short_label = label.replace("写真 - ", "").replace("動画 - ", "")
+
+                    # 過去にマサが除外した写真ならスキップ
+                    if label in protected_photos or short_label in protected_photos:
+                        continue
+
                     if cb.get_attribute("aria-checked") != "true":
                         cb.click(force=True)
                         selected_count += 1
                         found_new = True
-                        label = cb.get_attribute("aria-label") or "写真"
-                        short_label = label.replace("写真 - ", "").replace("動画 - ", "")
+                        initially_checked_labels.append(label)
                         print(f"  [{selected_count}/{target_count}] 選択: {short_label}")
                         time.sleep(0.3)
                 except Exception:
@@ -98,22 +142,45 @@ def main():
                 page.mouse.wheel(0, 600)
                 time.sleep(1.5)
                 scroll_attempts += 1
-                if not found_new and scroll_attempts >= 3:
+                if not found_new and scroll_attempts >= 4:
                     break
 
         print(f"\n合計 {selected_count} 枚の写真を選択しました！")
 
         if selected_count > 0:
+            print("\nブラウザの画面を見てください。青いチェックマークで選択されています。")
+            print("💡 残したい写真や対象外の写真があれば、画面上でクリックしてチェックを外してください。")
+
+            input("\n画面の確認が終わったら、ここに Enter キーを押してください: ")
+
+            # ユーザーがチェックを外したアイテムを判定
+            unselected_by_user = []
+            for label in initially_checked_labels:
+                try:
+                    cb = page.locator(f'div[role="checkbox"][aria-label="{label}"]').first
+                    if cb.count() > 0:
+                        if cb.get_attribute("aria-checked") != "true":
+                            unselected_by_user.append(label)
+                except Exception:
+                    pass
+
+            if unselected_by_user:
+                for lbl in unselected_by_user:
+                    protected_photos.add(lbl)
+                    short = lbl.replace("写真 - ", "").replace("動画 - ", "")
+                    protected_photos.add(short)
+                save_protected_photos(protected_photos)
+                print(f"✨ チェックを外した {len(unselected_by_user)} 枚の写真を次回以降スキップするよう記憶しました。")
+
             # ダウンロード実行
-            print("\n📥 Googleドライブへのダウンロードを開始します...")
+            print(f"\n📥 Googleドライブの『{target_folder_name}』へダウンロードを開始します...")
             temp_download_dir = os.path.join(base_dir, "temp_downloads")
             os.makedirs(temp_download_dir, exist_ok=True)
 
             try:
                 with page.expect_download(timeout=60000) as download_info:
-                    # Shift + D で一括ダウンロード
                     page.keyboard.press("Shift+D")
-                
+
                 download = download_info.value
                 download_path = os.path.join(temp_download_dir, download.suggested_filename)
                 download.save_as(download_path)
@@ -121,21 +188,19 @@ def main():
 
                 # ZIPファイルなら解凍してドライブフォルダへ移動
                 if download_path.lower().endswith(".zip"):
-                    print(f"ZIPファイルを解凍して Googleドライブ へ移動しています...")
+                    print(f"ZIPを展開して Googleドライブ へ移動中...")
                     with zipfile.ZipFile(download_path, 'r') as zip_ref:
                         zip_ref.extractall(drive_target_dir)
                     os.remove(download_path)
                 else:
-                    # 単一ファイル（画像など）の場合
                     dest_file = os.path.join(drive_target_dir, download.suggested_filename)
                     if os.path.exists(dest_file):
-                        # 同名ファイルがある場合はタイムスタンプを付与
                         base, ext = os.path.splitext(download.suggested_filename)
                         dest_file = os.path.join(drive_target_dir, f"{base}_{int(time.time())}{ext}")
                     os.replace(download_path, dest_file)
 
                 print("\n" + "=" * 50)
-                print("🎉 【成功】 Googleドライブへの移動が完了しました！")
+                print(f"🎉 【成功】 Googleドライブの『{target_folder_name}』フォルダへ保存完了！")
                 print(f"保存先: {drive_target_dir}")
                 print("=" * 50)
 
@@ -155,7 +220,7 @@ def main():
                     confirm_btn = page.locator('button:has-text("ゴミ箱に移動"), button:has-text("Move to trash")')
                     if confirm_btn.count() > 0:
                         confirm_btn.first.click()
-                        print("✅ Googleフォト側をゴミ箱へ移動しました！空き容量が増加します。")
+                        print("✅ Googleフォト側をゴミ箱へ移動しました！")
                     else:
                         page.keyboard.press("Enter")
                         print("✅ 移動を完了しました。")
@@ -165,7 +230,6 @@ def main():
 
             except Exception as e:
                 print(f"ダウンロード中にエラーが発生しました: {e}")
-                print("画面右上のメニュー『︙』から手動でダウンロードすることも可能です。")
                 input("Enterキーを押すと終了します...")
 
         else:
